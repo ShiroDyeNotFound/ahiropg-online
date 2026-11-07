@@ -164,8 +164,12 @@ Keep the channel name in sync with `forward.channel` in `config.yml`.
 
 ## Installation
 
+Grab `ahiropg-online-<version>.jar` from
+[Releases](../../releases) and drop it into the proxy's `plugins/`, or build it
+yourself:
+
 1. Open the `online` directory (`pom.xml`) and run `mvn package`; the jar appears at
-   `target/ahiropg-online-1.0.0.jar`
+   `target/ahiropg-online-<version>.jar`
 2. Drop it into the proxy's `plugins/`
 3. Start once to generate `plugins/ahiropg-online/config.yml`
 4. Adjust the config if needed and restart
@@ -173,6 +177,27 @@ Keep the channel name in sync with `forward.channel` in `config.yml`.
 Requirements: Velocity 3.x (built against `velocity-api 3.4.0`) and Java 17+.
 For Velocity 4.x, bump `velocity.version` in `pom.xml`; the API surface this plugin
 uses is identical in 3.x and 4.x.
+
+### Releasing
+
+The version is defined once, in the `<revision>` property of `pom.xml`. From there it
+drives the jar name and the version inside `velocity-plugin.json` (a filtered
+resource). The one exception is the `@Plugin` annotation, because annotation values
+must be compile-time constants; if it ever drifts from the descriptor, the plugin
+logs a warning at startup rather than reporting two different versions.
+
+To cut a release:
+
+```bash
+# 1. bump <revision> in pom.xml and the version in @Plugin, then commit
+# 2. tag and push
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which builds the jar, fails if the tag and the pom version disagree, and publishes a
+GitHub Release with the jar attached and generated release notes.
 
 ### users.yml
 
@@ -243,6 +268,7 @@ players:
 ```
 online/
 ├── pom.xml
+├── .github/workflows/release.yml            tag push -> build -> GitHub Release
 └── src/main/
     ├── java/com/ahiropg/online/
     │   ├── AhiropgOnlinePlugin.java         entry point, wires the components together

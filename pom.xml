@@ -7,7 +7,7 @@
 
     <groupId>com.ahiropg</groupId>
     <artifactId>ahiropg-online</artifactId>
-    <version>1.0.0</version>
+    <version>${revision}</version>
     <packaging>jar</packaging>
 
     <name>ahiropg-online</name>
@@ -29,6 +29,15 @@
     </developers>
 
     <properties>
+        <!--
+            The project version lives here and nowhere else. It becomes:
+              - the jar name (ahiropg-online-<revision>.jar)
+              - the version inside velocity-plugin.json (filtered at build time)
+            The @Plugin annotation in the source cannot be templated, so it is the one
+            place still updated by hand; the plugin warns in the log on startup if the
+            two ever disagree.
+        -->
+        <revision>1.0.0</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>17</maven.compiler.release>
@@ -54,6 +63,26 @@
 
     <build>
         <finalName>${project.artifactId}-${project.version}</finalName>
+
+        <resources>
+            <!-- Everything else is copied verbatim (config.yml must not be filtered). -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>velocity-plugin.json</exclude>
+                </excludes>
+            </resource>
+            <!-- The plugin descriptor takes its version from the pom, so there is one source of truth. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>velocity-plugin.json</include>
+                </includes>
+            </resource>
+        </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

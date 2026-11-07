@@ -1,0 +1,12 @@
+{
+  "id": "ahiropg-online",
+  "name": "ahiropg-online",
+  "version": "${revision}",
+  "description": "Premium session verification: premium players get their Mojang UUID, offline players get Velocity's offline UUID, and the verdict is forwarded to the backend.",
+  "url": "",
+  "authors": [
+    "ShiroDyeNotFound"
+  ],
+  "dependencies": [],
+  "main": "com.ahiropg.online.AhiropgOnlinePlugin"
+}
