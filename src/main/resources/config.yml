@@ -1,0 +1,80 @@
+# ==========================================================================
+#  ahiropg-online -- Velocity premium session verification
+#
+#  One job: when a player connects, decide whether this login actually is a
+#  premium (Mojang-authenticated) session.
+#    yes -> use the Mojang UUID and record the name in users.yml
+#    no  -> use Velocity's own offline UUID
+#  The verdict travels to the backend with the login handshake, and is pushed
+#  again over a plugin messaging channel.
+#
+#  ----------------------------------------------------------------------
+#  HOW PREMIUM vs OFFLINE IS DECIDED (1.20.2+ always sends a UUID at login):
+#
+#    Premium launcher, premium login -> sends the account's real UUID
+#                                       -> handed to Velocity for real verification
+#    Offline login / cracked client  -> sends its own offline UUID
+#                                       -> allowed through as offline
+#    3rd-party auth (authlib sites)  -> sends the site's own UUID
+#                                       -> allowed through as offline
+#
+#  A regular player whose name happens to match a premium account is therefore
+#  never caught in the crossfire. An impostor who forges a premium UUID only
+#  gets himself kicked, because he cannot complete the encryption handshake.
+# ==========================================================================
+
+# HYBRID -- decide premium/offline per connection (mixed-mode network, default)
+# PROXY  -- do not interfere at all; login mode follows velocity.toml online-mode
+session-policy: HYBRID
+
+hybrid:
+  # Whether offline connections are accepted.
+  #   true  -> offline clients join with their offline UUID
+  #   false -> reject them, showing offline-notice.denied-message (premium-only network)
+  allow-offline-connections: true
+
+  # Clients 1.19.2 and older do not send a UUID at login, so intent is unknown.
+  #   offline -> treat them as offline
+  #   premium -> require a premium session
+  legacy-client-policy: offline
+
+  # Where to fall back when the Mojang lookup fails (timeout / rate limit / network)
+  #   offline -> treat as offline (default: rather skip verification than kick by mistake)
+  #   premium -> require a premium session
+  mojang-unavailable-policy: offline
+
+# Backend notification
+forward:
+  # Plugin messaging channel the backend listens on (namespace:name, lowercase)
+  channel: "ahiropg:online"
+
+  # Push the identity again whenever a player connects to / switches backend
+  on-server-switch: true
+
+  # Overwrite the GameProfile UUID forwarded to the backend with our verdict.
+  # Normally a safety net: a premium player already has the premium UUID and an
+  # offline player already has the offline UUID. Overwriting guarantees the
+  # backend receives exactly the UUID we decided on, even if the client sent
+  # something odd or another plugin rewrote the profile. Leave it on.
+  override-uuid: true
+
+# Mojang API (resolves "what is the premium UUID for this name")
+mojang:
+  # Per-request timeout in milliseconds. Lookups are async; offline connections
+  # never wait for them.
+  timeout-ms: 3000
+  # How long lookup results are cached, in minutes, to avoid rate limiting.
+  cache-minutes: 60
+
+# Offline notice
+offline-notice:
+  enabled: true
+
+  # Shown only to players who joined premium before and are offline this time --
+  # i.e. their session probably dropped (expired token, launcher switched to
+  # offline login, new device). Players who were never premium never see this.
+  # Placeholders: %player% %uuid%. Supports & codes or MiniMessage.
+  message: "&eYou previously joined with a premium session, but this login did not verify as premium (expired session, or your launcher is in offline mode). You are joining as an offline player this time."
+
+  # Shown to offline connections rejected because allow-offline-connections is false.
+  denied-message: "&cThis server only accepts premium (Mojang-authenticated) logins."
