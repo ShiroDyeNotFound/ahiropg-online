@@ -34,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <pre>
  * PreLoginEvent            decide whether this connection goes premium or offline
  *                          (offline-intent connections never wait on the network; only
- *                          premium claims trigger a Mojang lookup)
+ *                          premium claims trigger a Mojang lookup). An account that has
+ *                          joined as premium before is refused if it now tries offline.
  *   |
  *   v
  * GameProfileRequestEvent  the actual verdict: isOnlineMode() means "did this login pass
@@ -95,34 +96,40 @@ public final class IdentityListener {
         UUID declared = event.getUniqueId();
         boolean proxyOnline = proxy.getConfiguration().isOnlineMode();
 
+        // Has this account ever proved a premium session? users.yml keeps that flag
+        // sticky, and the planner turns it into a hard requirement when locking is on.
+        boolean premiumHistory = users.get(username).map(UserStore.Record::premium).orElse(false);
+
         // Offline-intent connections (they declared the offline UUID) and old clients
         // do not need a Mojang lookup at all.
         if (declared == null || declared.equals(OfflineUuids.of(username))) {
-            apply(event, username, declared, Optional.empty(), false, proxyOnline);
+            apply(event, username, declared, Optional.empty(), false, proxyOnline, premiumHistory);
             return CompletableFuture.completedFuture(null);
         }
 
         try {
             return mojang.lookup(username)
-                    .thenAccept(profile -> apply(event, username, declared, profile, false, proxyOnline))
+                    .thenAccept(profile -> apply(event, username, declared, profile, false, proxyOnline, premiumHistory))
                     .exceptionally(error -> {
                         logger.warn("Mojang lookup failed for {}, falling back per configuration: {}",
                                 username, rootMessage(error));
-                        apply(event, username, declared, Optional.empty(), true, proxyOnline);
+                        apply(event, username, declared, Optional.empty(), true, proxyOnline, premiumHistory);
                         return null;
                     });
         } catch (RuntimeException e) {
             // In rare cases lookup itself throws (the HTTP client was already closed, say).
             // Never let that break the login flow.
             logger.warn("Mojang lookup threw for {}, falling back per configuration: {}", username, e.toString());
-            apply(event, username, declared, Optional.empty(), true, proxyOnline);
+            apply(event, username, declared, Optional.empty(), true, proxyOnline, premiumHistory);
             return CompletableFuture.completedFuture(null);
         }
     }
 
     private void apply(PreLoginEvent event, String username, UUID declared,
-                       Optional<MojangApi.Profile> lookup, boolean lookupFailed, boolean proxyOnline) {
-        ModeDecision decision = SessionPlanner.decide(username, declared, lookup, lookupFailed, proxyOnline, settings);
+                       Optional<MojangApi.Profile> lookup, boolean lookupFailed, boolean proxyOnline,
+                       boolean premiumHistory) {
+        ModeDecision decision = SessionPlanner.decide(username, declared, lookup, lookupFailed,
+                proxyOnline, premiumHistory, settings);
         switch (decision) {
             case FORCE_ONLINE -> {
                 event.setResult(PreLoginEvent.PreLoginComponentResult.forceOnlineMode());
@@ -138,6 +145,12 @@ public final class IdentityListener {
                         .denied(Texts.parse(settings.offlineDeniedMessage())));
                 logger.info("{} has no premium session and this server rejects offline connections -> denied (UUID {})",
                         username, describe(declared));
+            }
+            case DENY_PREMIUM_REQUIRED -> {
+                event.setResult(PreLoginEvent.PreLoginComponentResult
+                        .denied(Texts.parse(settings.premiumRequiredMessage())));
+                logger.info("{} is locked to premium (it joined as premium before) and tried to join offline "
+                        + "-> denied (UUID {})", username, describe(declared));
             }
             case LEAVE -> logger.debug("{} left to the proxy default login mode (UUID {})",
                     username, describe(declared));

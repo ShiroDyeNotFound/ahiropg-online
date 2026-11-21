@@ -12,6 +12,9 @@ public enum ModeDecision {
     /** Reject the login. */
     DENY,
 
+    /** Reject the login because this account has joined as premium before and is locked to it. */
+    DENY_PREMIUM_REQUIRED,
+
     /** Do not interfere; let Velocity follow velocity.toml online-mode. */
     LEAVE
 }

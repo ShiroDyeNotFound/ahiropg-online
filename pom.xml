@@ -37,7 +37,7 @@
             place still updated by hand; the plugin warns in the log on startup if the
             two ever disagree.
         -->
-        <revision>1.0.0</revision>
+        <revision>1.1.0</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>17</maven.compiler.release>

@@ -24,9 +24,12 @@ public record Settings(
         boolean overrideUuid,
         long mojangTimeoutMs,
         long mojangCacheMinutes,
+        ProxyConfig mojangProxy,
+        boolean lockToPremium,
         boolean offlineNoticeEnabled,
         String offlineNoticeMessage,
-        String offlineDeniedMessage
+        String offlineDeniedMessage,
+        String premiumRequiredMessage
 ) {
 
     public enum Policy {
@@ -81,14 +84,44 @@ public record Settings(
                 root.node("forward", "override-uuid").getBoolean(true),
                 Math.max(500L, root.node("mojang", "timeout-ms").getLong(3000L)),
                 Math.max(1L, root.node("mojang", "cache-minutes").getLong(60L)),
+                parseProxy(root.node("mojang", "proxy"), logger),
+                root.node("hybrid", "lock-to-premium").getBoolean(true),
                 root.node("offline-notice", "enabled").getBoolean(true),
                 root.node("offline-notice", "message").getString(
                         "&eYou previously joined with a premium session, but this login did not verify as premium "
                                 + "(expired session, or your launcher is in offline mode). "
                                 + "You are joining as an offline player this time."),
                 root.node("offline-notice", "denied-message").getString(
-                        "&cThis server only accepts premium (Mojang-authenticated) logins.")
+                        "&cThis server only accepts premium (Mojang-authenticated) logins."),
+                root.node("offline-notice", "premium-required-message").getString(
+                        "&cThis account has joined with a premium session before, so it can only join "
+                                + "with premium authentication from now on. Please start the game from the "
+                                + "official launcher.")
         );
+    }
+
+    private static ProxyConfig parseProxy(CommentedConfigurationNode node, Logger logger) {
+        if (!node.node("enabled").getBoolean(false)) {
+            return ProxyConfig.DISABLED;
+        }
+
+        ProxyConfig.Type type = parseEnum(ProxyConfig.Type.class,
+                node.node("type").getString("HTTP"), ProxyConfig.Type.HTTP, logger, "mojang.proxy.type");
+        String host = node.node("host").getString("").trim();
+        long port = node.node("port").getLong(0L);
+        String username = node.node("username").getString("");
+        String password = node.node("password").getString("");
+
+        if (host.isEmpty() || port < 1 || port > 65535) {
+            logger.warn("config.yml mojang.proxy is enabled but host/port are unusable "
+                    + "(host={}, port={}); Mojang requests will go out directly", host, port);
+            return ProxyConfig.DISABLED;
+        }
+
+        ProxyConfig proxy = new ProxyConfig(true, type, host, (int) port, username, password);
+        logger.info("Mojang requests will use the {} proxy {}:{}{}", type, host, port,
+                proxy.authenticated() ? " with authentication" : "");
+        return proxy;
     }
 
     private static <E extends Enum<E>> E parseEnum(Class<E> type, String raw, E fallback, Logger logger, String key) {

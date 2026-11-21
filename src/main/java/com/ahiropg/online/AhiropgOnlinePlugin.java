@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
         id = "ahiropg-online",
         name = "ahiropg-online",
-        version = "1.0.0",
+        version = "1.1.0",
         description = "Premium session verification: premium players get their Mojang UUID, "
                 + "offline players get Velocity's offline UUID, and the verdict is forwarded to the backend.",
         authors = {"ShiroDyeNotFound"}
@@ -75,7 +75,8 @@ public final class AhiropgOnlinePlugin {
 
         warnOnVersionMismatch();
 
-        this.mojang = new MojangApi(settings.mojangTimeoutMs(), settings.mojangCacheMinutes(), logger);
+        this.mojang = new MojangApi(settings.mojangTimeoutMs(), settings.mojangCacheMinutes(),
+                settings.mojangProxy(), logger);
         BackendMessenger messenger = new BackendMessenger(proxy, settings, logger);
         messenger.registerChannel();
 

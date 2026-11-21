@@ -44,7 +44,9 @@ public final class UserStore {
             #  ahiropg-online -- player identity records
             #  Maintained automatically by the plugin; editing it has no effect.
             #
-            #  premium       whether this account has ever passed premium session verification
+            #  premium       whether this account has ever passed premium session verification.
+            #                Never goes back to false. With hybrid.lock-to-premium enabled
+            #                it also means the account may only join as premium from now on.
             #  premium-uuid  the Mojang UUID (line omitted when it is not known yet)
             #  offline-uuid  the UUID derived by Velocity's offline rule
             #  last-uuid     the UUID forwarded to the backend most recently

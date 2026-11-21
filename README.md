@@ -56,19 +56,22 @@ connection even though the proxy is offline". The result comes back through
 The Mojang API (`api.mojang.com/users/profiles/minecraft/<name>`) is only used to
 learn the canonical premium UUID for a name, to record it in `users.yml` and to
 sanity-check the UUID the session produced. Lookups are asynchronous, so offline
-connections never wait on them.
+connections never wait on them. If `api.mojang.com` is unreachable from your machine,
+configure the optional HTTP or SOCKS5 proxy described below.
 
 ---
 
 ## What happens on a mixed-mode network
 
-With an offline-mode proxy and the default `session-policy: HYBRID`:
+With an offline-mode proxy and the defaults (`session-policy: HYBRID`,
+`lock-to-premium: true`):
 
 | Situation | Verdict | Outcome |
 | --- | --- | --- |
 | Premium account, premium client | premium | Mojang UUID `5c89…` |
-| Premium account, but logging in offline this time | offline | offline UUID `0b54…` plus a session-dropped notice |
-| Regular player whose name matches a premium account | offline | offline UUID, joins normally, no notice |
+| Premium account, already premium before, now logging in offline | refused | `premium-required-message` |
+| Account that has never been premium, logging in offline | offline | offline UUID `0b54…` |
+| Regular player whose name matches a premium account | offline | offline UUID, joins normally |
 | Third-party auth launcher | offline | offline UUID, joins normally |
 | Cracked client forging a premium UUID | — | fails the handshake, kicked by Velocity |
 
@@ -77,10 +80,21 @@ longer decides admission; what decides it is how the client declares it wants to
 in. A non-premium player using a premium account's name sends the offline UUID and
 takes the offline path, indistinguishable from any other offline player.
 
-**The notice** is only sent to players who have joined premium before (`premium: true`
-in `users.yml`) and are offline this time, i.e. their session probably dropped
-(expired token, launcher switched to offline login, new device). Pure offline players
-who were never premium never see it.
+**The first verified premium session locks the account.** `users.yml` keeps a sticky
+`premium` flag per name, and once it is set the account may only join with premium
+authentication: the same session verification that proves ownership on the first login
+becomes a requirement from then on. The lock cannot be sidestepped by switching the
+launcher to offline mode, because an explicit offline login for a locked name is
+refused before any verification could be skipped.
+
+Upgrading is one-way by design: an account that has only ever joined offline can still
+join with premium later, and from that login it is locked as well. Nothing ever clears
+the flag.
+
+Set `lock-to-premium: false` to restore the lenient behaviour, where a previously
+premium account may join offline and only receives `offline-notice.message` as a hint
+that its session probably dropped (expired token, launcher switched to offline login,
+new device).
 
 ---
 
@@ -88,14 +102,18 @@ who were never premium never see it.
 
 ### `HYBRID` (default)
 
-Per-connection decisions as described above. Three fine-grained switches under the
+Per-connection decisions as described above. Four fine-grained switches under the
 `hybrid` section of `config.yml`:
 
 | Option | Effect |
 | --- | --- |
 | `allow-offline-connections` | whether offline connections are accepted. `false` = premium-only network; offline connections are rejected with `denied-message` |
+| `lock-to-premium` | once an account has joined as premium, refuse its offline logins (`premium-required-message`). `false` = warn instead |
 | `legacy-client-policy` | what to do with clients 1.19.2 and older (they declare no UUID): `offline` / `premium` |
 | `mojang-unavailable-policy` | which way to fall back when the Mojang lookup fails: `offline` (default, never kicks by mistake) / `premium` |
+
+A locked account is never stranded by an API outage: the lock path does not need the
+Mojang lookup, it only asks Velocity to verify the session.
 
 ### `PROXY`
 
@@ -178,6 +196,37 @@ Requirements: Velocity 3.x (built against `velocity-api 3.4.0`) and Java 17+.
 For Velocity 4.x, bump `velocity.version` in `pom.xml`; the API surface this plugin
 uses is identical in 3.x and 4.x.
 
+### Using a proxy for Mojang lookups
+
+On networks where `api.mojang.com` times out, point the lookup at an HTTP or SOCKS5
+proxy. Nothing else in the plugin uses the network, so this only affects Mojang calls:
+
+```yaml
+mojang:
+  proxy:
+    enabled: true
+    type: SOCKS5          # HTTP or SOCKS5
+    host: 127.0.0.1
+    port: 7891
+    username: ""          # leave empty if the proxy needs no credentials
+    password: ""
+```
+
+Both types support username/password authentication. Name resolution happens **at the
+proxy** for both, so a polluted local DNS cannot break the request. Credentials are
+kept inside the plugin rather than in JVM-wide state, but they are stored in plain text
+in `config.yml`, so restrict that file's permissions like you would any other secret. A
+misconfigured proxy is not fatal: lookups fail, the plugin logs a warning and falls back
+according to `hybrid.mojang-unavailable-policy`, and the player's own session UUID
+still fills `users.yml`.
+
+If the proxy is unreachable, or sends back something unexpected, the log line carries
+the proxy address and the reason, for example:
+
+```
+[ahiropg-online] Mojang lookup failed for NapCatt_owo, falling back per configuration: java.io.IOException: proxy at 127.0.0.1:7891 refused to tunnel to api.mojang.com:443 (HTTP 407)
+```
+
 ### Releasing
 
 The version is defined once, in the `<revision>` property of `pom.xml`. From there it
@@ -218,7 +267,8 @@ players:
 
 - keys are lowercase names; `name` keeps the original casing (offline UUIDs depend on it)
 - `premium` means the account has **ever** passed premium verification. It never goes
-  back to `false`, and it is what decides whether the session-dropped notice is sent
+  back to `false`, and with `lock-to-premium: true` it is what makes the account
+  premium-only from then on
 - `last-mode` / `last-uuid` describe the most recent login only
 - it is not written on every login: changes are flushed every 5 seconds and once on
   shutdown, via a temporary file plus an atomic move
@@ -234,7 +284,8 @@ players:
 [ahiropg-online] The proxy is in offline mode, so this plugin calls forceOnlineMode() on premium connections and lets Velocity run its own session verification.
 [ahiropg-online] NapCatt_owo claims a premium client (UUID 5c89121b-…) -> handing over to Velocity for premium session verification
 [ahiropg-online] NapCatt_owo passed premium session verification -> forwarding premium UUID 5c89121b-4e93-46bd-80c9-3022a01c5bbd
-[ahiropg-online] NapCatt_owo did not pass premium session verification -> forwarding offline UUID 0b5461e0-ea56-3019-8b05-6f4330752d8b (this account used to join as premium)
+[ahiropg-online] NapCatt_owo allowed through as offline (UUID 0b5461e0-…)
+[ahiropg-online] NapCatt_owo is locked to premium (it joined as premium before) and tried to join offline -> denied (UUID 0b5461e0-…)
 ```
 
 ---
@@ -261,6 +312,16 @@ players:
    trustworthy. The only source of truth is the session verification of the current
    login.
 
+6. **The lock is keyed to the name, not the account.** A premium player who renames
+   their Mojang account arrives under a new name and is treated as a new player, while
+   the old name keeps `premium: true`. Deleting an entry from `users.yml` deliberately
+   clears the lock, so treat that file as an administrative surface.
+
+7. **Locked accounts need a working session service.** Refusing offline logins means a
+   locked player cannot get in while Mojang's session servers are down, or while their
+   own network cannot reach them. That is the point of the lock, but it is a support
+   burden worth knowing about before enabling it.
+
 ---
 
 ## Project layout
@@ -275,11 +336,20 @@ online/
     │   ├── auth/
     │   │   ├── Identity.java                the verdict for one login
     │   │   ├── ModeDecision.java            what to do with one connection
-    │   │   ├── SessionPlanner.java          the pure-function decision table
-    │   │   ├── MojangApi.java               async premium UUID lookup, cached and timed out
+    │   │   ├── SessionPlanner.java          the pure-function decision table (incl. the lock)
+    │   │   ├── MojangApi.java               async premium UUID lookup, cache, transport choice
     │   │   └── OfflineUuids.java            Velocity's offline UUID rule
-    │   ├── config/Settings.java             in-memory model of config.yml
+    │   ├── config/
+    │   │   ├── Settings.java                in-memory model of config.yml
+    │   │   └── ProxyConfig.java             optional HTTP / SOCKS5 proxy settings
     │   ├── forward/BackendMessenger.java    pushes the identity to the backend
+    │   ├── http/
+    │   │   ├── Transport.java               one blocking GET, however it is routed
+    │   │   ├── HttpClientTransport.java     direct requests (no proxy)
+    │   │   ├── HttpProxyTransport.java      own CONNECT tunnel + Proxy-Authorization
+    │   │   ├── Socks5Transport.java         own SOCKS5 client, host name resolved by the proxy
+    │   │   ├── TunneledRequest.java         shared TLS + request writing + response reading
+    │   │   └── HttpResponseReader.java      status line, headers, Content-Length / chunked
     │   ├── listener/IdentityListener.java   main flow (PreLogin -> GameProfile -> post-login -> backend)
     │   ├── user/UserStore.java              users.yml reading and writing
     │   └── util/Texts.java                  config text to Component

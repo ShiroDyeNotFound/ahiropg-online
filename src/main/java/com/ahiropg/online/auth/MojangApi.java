@@ -1,21 +1,24 @@
 package com.ahiropg.online.auth;
 
+import com.ahiropg.online.config.ProxyConfig;
+import com.ahiropg.online.http.HttpClientTransport;
+import com.ahiropg.online.http.HttpProxyTransport;
+import com.ahiropg.online.http.Socks5Transport;
+import com.ahiropg.online.http.Transport;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,8 +33,9 @@ import java.util.concurrent.TimeUnit;
  * UUID found here is used for the users.yml record and for a consistency check
  * against the UUID the session produced.</p>
  *
- * <p>Every request is asynchronous ({@link HttpClient#sendAsync}), so Velocity's
- * network threads are never blocked.</p>
+ * <p>Requests are blocking on a small dedicated executor, so Velocity's network
+ * threads never wait on the network. They optionally go through an HTTP or SOCKS5
+ * proxy, for networks that cannot reach api.mojang.com directly.</p>
  */
 public final class MojangApi implements AutoCloseable {
 
@@ -44,27 +48,33 @@ public final class MojangApi implements AutoCloseable {
     private record CacheEntry(Optional<Profile> profile, long expiresAt) {
     }
 
-    private final HttpClient http;
+    private final Transport transport;
     private final ExecutorService executor;
-    private final Duration timeout;
     private final long cacheMillis;
     private final Logger logger;
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    public MojangApi(long timeoutMs, long cacheMinutes, Logger logger) {
+    public MojangApi(long timeoutMs, long cacheMinutes, ProxyConfig proxy, Logger logger) {
         this.logger = logger;
-        this.timeout = Duration.ofMillis(Math.max(500L, timeoutMs));
         this.cacheMillis = TimeUnit.MINUTES.toMillis(Math.max(1L, cacheMinutes));
         this.executor = Executors.newFixedThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "ahiropg-online-mojang");
             thread.setDaemon(true);
             return thread;
         });
-        this.http = HttpClient.newBuilder()
-                .connectTimeout(this.timeout)
-                .executor(executor)
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        long effectiveTimeout = Math.max(500L, timeoutMs);
+        this.transport = createTransport(proxy, effectiveTimeout);
+    }
+
+    private static Transport createTransport(ProxyConfig proxy, long timeoutMs) {
+        if (!proxy.enabled()) {
+            return new HttpClientTransport(timeoutMs);
+        }
+        // Both proxy types are tunnelled by hand; see the transport classes for why the
+        // JDK's own clients are not usable here.
+        return proxy.type() == ProxyConfig.Type.SOCKS5
+                ? new Socks5Transport(proxy, timeoutMs)
+                : new HttpProxyTransport(proxy, timeoutMs);
     }
 
     /**
@@ -83,14 +93,16 @@ public final class MojangApi implements AutoCloseable {
         }
 
         URI uri = URI.create(LOOKUP_URL + URLEncoder.encode(username, StandardCharsets.UTF_8));
-        HttpRequest request = HttpRequest.newBuilder(uri)
-                .timeout(timeout)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
 
-        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenApply(response -> parse(username, response.statusCode(), response.body()))
+        return CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return transport.get(uri);
+                    } catch (IOException e) {
+                        throw new CompletionException(e);
+                    }
+                }, executor)
+                .thenApply(response -> parse(username, response.status(), response.body()))
                 .thenApply(profile -> {
                     cache.put(key, new CacheEntry(profile, System.currentTimeMillis() + cacheMillis));
                     return profile;

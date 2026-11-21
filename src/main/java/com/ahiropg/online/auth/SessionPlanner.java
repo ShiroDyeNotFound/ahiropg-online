@@ -42,19 +42,37 @@ public final class SessionPlanner {
     }
 
     /**
-     * @param username     the name the client logged in with (original case matters,
-     *                     the offline UUID is derived from it)
-     * @param declaredUuid the UUID the client declared, null on clients 1.19.2 and older
-     * @param lookup       the premium account for that name on Mojang, if any
-     * @param lookupFailed whether the Mojang lookup itself failed (timeout / rate limit / network)
-     * @param proxyOnline  online-mode as configured in the proxy's velocity.toml
+     * @param username      the name the client logged in with (original case matters,
+     *                      the offline UUID is derived from it)
+     * @param declaredUuid  the UUID the client declared, null on clients 1.19.2 and older
+     * @param lookup        the premium account for that name on Mojang, if any
+     * @param lookupFailed  whether the Mojang lookup itself failed (timeout / rate limit / network)
+     * @param proxyOnline   online-mode as configured in the proxy's velocity.toml
+     * @param premiumHistory whether this account has ever joined with a premium session
+     *                       before (from users.yml). Combined with
+     *                       {@code hybrid.lock-to-premium} inside this method.
      */
     public static ModeDecision decide(String username,
                                       UUID declaredUuid,
                                       Optional<MojangApi.Profile> lookup,
                                       boolean lookupFailed,
                                       boolean proxyOnline,
+                                      boolean premiumHistory,
                                       Settings settings) {
+
+        if (settings.lockToPremium() && premiumHistory) {
+            if (declaredUuid != null && declaredUuid.equals(OfflineUuids.of(username))) {
+                // This account already proved ownership of a premium account once. An
+                // explicit offline login is refused, so the lock cannot be sidestepped
+                // by switching the launcher to offline mode.
+                return ModeDecision.DENY_PREMIUM_REQUIRED;
+            }
+            // Anything else (a premium claim, a third-party launcher's UUID, or an old
+            // client that declares nothing) is sent through premium verification.
+            // A genuine premium client passes; everyone else fails the handshake.
+            // This needs no Mojang lookup, so an API outage cannot lock anybody out.
+            return online(settings, proxyOnline);
+        }
 
         if (declaredUuid != null) {
             if (declaredUuid.equals(OfflineUuids.of(username))) {

@@ -43,6 +43,15 @@ hybrid:
   #   premium -> require a premium session
   mojang-unavailable-policy: offline
 
+  # Lock an account to premium once it has joined as premium.
+  #   true  -> the first verified premium session makes that name premium-only from
+  #            then on; an offline login for it is refused (premium-required-message).
+  #            An account that has only ever joined offline may still upgrade to
+  #            premium later, and from that login it is locked as well.
+  #   false -> old behaviour: a previously premium account may join offline and only
+  #            receives the offline-notice.message
+  lock-to-premium: true
+
 # Backend notification
 forward:
   # Plugin messaging channel the backend listens on (namespace:name, lowercase)
@@ -66,15 +75,39 @@ mojang:
   # How long lookup results are cached, in minutes, to avoid rate limiting.
   cache-minutes: 60
 
+  # Optional outbound proxy. Use this when api.mojang.com cannot be reached
+  # directly from your machine (for example on networks where it times out).
+  # Only Mojang lookups are affected; nothing else in the plugin talks to the network.
+  proxy:
+    enabled: false
+
+    # HTTP   - an HTTP proxy. HTTPS targets are tunnelled with CONNECT, and the
+    #          proxy resolves api.mojang.com.
+    # SOCKS5 - a SOCKS5 proxy, including username/password authentication. The host
+    #          name is passed to the proxy for resolution, so local DNS problems
+    #          do not matter.
+    type: HTTP
+
+    host: 127.0.0.1
+    port: 7890
+
+    # Leave both empty for a proxy without authentication.
+    username: ""
+    password: ""
+
 # Offline notice
 offline-notice:
   enabled: true
 
-  # Shown only to players who joined premium before and are offline this time --
-  # i.e. their session probably dropped (expired token, launcher switched to
-  # offline login, new device). Players who were never premium never see this.
+  # Shown only to players who joined premium before and are offline this time.
+  # Only used when hybrid.lock-to-premium is false; with locking enabled those
+  # connections are refused outright instead.
   # Placeholders: %player% %uuid%. Supports & codes or MiniMessage.
   message: "&eYou previously joined with a premium session, but this login did not verify as premium (expired session, or your launcher is in offline mode). You are joining as an offline player this time."
 
   # Shown to offline connections rejected because allow-offline-connections is false.
   denied-message: "&cThis server only accepts premium (Mojang-authenticated) logins."
+
+  # Shown to an account that has joined as premium before and now tries to join
+  # offline while hybrid.lock-to-premium is true.
+  premium-required-message: "&cThis account has joined with a premium session before, so it can only join with premium authentication from now on. Please start the game from the official launcher."
